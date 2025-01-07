@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Calcul Photovoltaïque (HTML/JS)</title>
+  <style>
+    /* --- Style simplifié en inline CSS --- */
+
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0; 
+      padding: 20px;
+      background-color: #f4f4f4;
+    }
+
+    h1, h2 {
+      color: #333;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 20px;
+      border-radius: 8px;
+    }
+
+    label, select, input {
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    input, select, button {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+
+    button {
+      background-color: #4CAF50;
+      color: #fff;
+      cursor: pointer;
+      font-size: 1rem;
+      margin-top: 10px;
+    }
+
+    button:hover {
+      background-color: #45a049;
+    }
+
+    .results, .error {
+      margin-top: 20px;
+      padding: 10px;
+      border-radius: 5px;
+    }
+
+    .error {
+      background-color: #ffcfcf;
+      color: #a94442;
+      border: 1px solid #e8bebe;
+    }
+
+    .success {
+      background-color: #e9ffe9;
+      border: 1px solid #b8e6b8;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: center;
+    }
+
+    th {
+      background-color: #4CAF50;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Calcul Photovoltaïque en Pur JavaScript</h1>
+  <p>Entrez un code postal français et d'autres paramètres, puis cliquez sur <strong>Rechercher</strong>.</p>
+  
+  <!-- Formulaire principal -->
+  <div>
+    <label for="postal_code">Code Postal :</label>
+    <input type="text" id="postal_code" placeholder="ex: 13000" required>
+
+    <button id="btnSearchCities">Rechercher les Villes (Zippopotam.us)</button>
+  </div>
+
+  <!-- Bloc d'affichage des villes trouvées + choix orientation etc. -->
+  <div id="citiesBlock" style="display:none; margin-top:20px;">
+    <h2>Villes Trouvées</h2>
+    <label for="citySelect">Choisissez une ville :</label>
+    <select id="citySelect"></select>
+
+    <label for="aspectSelect">Orientation (Aspect) :</label>
+    <select id="aspectSelect">
+      <option value="SUD">SUD</option>
+      <option value="EST">EST</option>
+      <option value="OUEST">OUEST</option>
+      <option value="SUD-OUEST">SUD-OUEST</option>
+      <option value="SUD-EST">SUD-EST</option>
+    </select>
+
+    <label for="depenseMax">Dépense Mensuelle Maximale (€) :</label>
+    <input type="number" id="depenseMax" value="100" step="0.01" required>
+
+    <label for="typeBranchement">Type de Branchement :</label>
+    <select id="typeBranchement">
+      <option value="monophase">Monophasé</option>
+      <option value="triphase">Triphasé</option>
+    </select>
+
+    <button id="btnCalculate">Calculer</button>
+  </div>
+
+  <!-- Bloc d'affichage des résultats -->
+  <div id="resultsBlock" class="results success" style="display:none;">
+    <h2>Résultats :</h2>
+    <div id="resultsContent"></div>
+  </div>
+
+  <!-- Bloc d'erreur -->
+  <div id="errorBlock" class="error" style="display:none;"></div>
+</div>
+
+<script>
+/* ---------------------------------------------------------------
+   1) Données "statiques" : PRIX_INSTALLATIONS, TAEG_TABLE, etc.
+--------------------------------------------------------------- */
+const PRIX_INSTALLATIONS = {
+  3: 12900,
+  4: 16900,
+  5: 17900,
+  6: 20900,
+  7: 22900,
+  8: 23900,
+  9: 25900,
+  10: 27900,
+  12: 29900
+};
+
+const TAEG_TABLE = {
+  72: 6.0603,
+  84: 5.9547,
+  96: 5.876,
+  108: 5.8142,
+  120: 5.7656,
+  132: 5.7247,
+  144: 5.6915,
+  156: 5.6638,
+  168: 5.639,
+  180: 5.618,
+};
+
+/* ---------------------------------------------------------------
+   2) Fonctions de calcul financiers en JavaScript
+--------------------------------------------------------------- */
+function calculMensualites(montant, mensualites) {
+  const tauxAnnuel = TAEG_TABLE[mensualites] / 100;
+  if (!tauxAnnuel) return null;
+  const tauxMensuel = tauxAnnuel / 12;
+  // Formule d'annuité
+  const mensualite = montant * tauxMensuel / (1 - Math.pow((1 + tauxMensuel), -mensualites));
+  return Math.round(mensualite * 100) / 100; 
+}
+
+function calculCoutReel(prix_ttc, puissance_kwc, type_branchement) {
+  let montant_ht, tva;
+  if (puissance_kwc > 3) {
+    montant_ht = prix_ttc / 1.2;
+    tva = prix_ttc - montant_ht; 
+  } else {
+    montant_ht = prix_ttc;
+    tva = 0;
+  }
+
+  let prime = 0;
+  if (puissance_kwc <= 3) {
+    prime = 220 * puissance_kwc;
+  } else {
+    const prime_kwc = (type_branchement === 'monophase') 
+                      ? Math.min(puissance_kwc, 6) 
+                      : puissance_kwc;
+    prime = 160 * prime_kwc;
+  }
+
+  const cout_reel = Math.round(montant_ht - prime);
+  return [cout_reel, tva, prime];
+}
+
+function calculTableauEconomies(production_1kwc, puissance_kwc, cout_reel, taux_aug = 5, prix_kwh = 0.23) {
+  let production_annuelle = production_1kwc * puissance_kwc;
+  let economie_annuelle = Math.round(production_annuelle * prix_kwh * 100) / 100;
+
+  let annees = 0;
+  let economies_cumulees = 0;
+
+  while (economies_cumulees < cout_reel) {
+    annees++;
+    economies_cumulees = Math.round((economies_cumulees + economie_annuelle) * 100) / 100;
+    economie_annuelle = Math.round(economie_annuelle * (1 + taux_aug/100) * 100) / 100;
+  }
+
+  const economie_mensuelle_moyenne = Math.round((economies_cumulees / (annees * 12)) * 100) / 100;
+  return [economies_cumulees, economie_mensuelle_moyenne, annees];
+}
+
+/* ---------------------------------------------------------------
+   3) Fonctions d'appel API (Zippopotam.us, GISCO, PVGIS)
+--------------------------------------------------------------- */
+async function getCitiesFromPostalCode(postalCode) {
+  // Zippopotam.us
+  const url = `http://api.zippopotam.us/fr/${postalCode}`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.places.map(p => p['place name']);
+  } catch(e) {
+    console.error(e);
+    return [];
+  }
+}
+
+async function getCoordinatesFromGisco(cityName) {
+  const url = `https://gisco-services.ec.europa.eu/api?lang=en&limit=1&q=${encodeURIComponent(cityName)}`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [null, null];
+    const data = await response.json();
+    const coords = data.features[0].geometry.coordinates;
+    // [lon, lat]
+    return [coords[1], coords[0]]; // on renvoie [lat, lon]
+  } catch(e) {
+    console.error(e);
+    return [null, null];
+  }
+}
+
+async function getProductible(lat, lon, aspectValue) {
+  const url = `https://re.jrc.ec.europa.eu/api/v5_2/PVcalc?outputformat=basic&lat=${lat}&lon=${lon}&raddatabase=PVGIS-SARAH2&peakpower=1&loss=14&pvtechchoice=crystSi&angle=35&aspect=${aspectValue}&usehorizon=1`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const text = await response.text();
+    const lines = text.split('\n');
+    for (let line of lines) {
+      if (line.includes("Year")) {
+        const parts = line.split('\t');
+        return parseFloat(parts[1]);
+      }
+    }
+    return null;
+  } catch(e) {
+    console.error(e);
+    return null;
+  }
+}
+
+/* ---------------------------------------------------------------
+   4) Fonctions de logique appliquée
+   - trouverInstallation()
+   - trouverMeilleureInstallation()
+--------------------------------------------------------------- */
+
+function trouverInstallation(puissance_kwc, productible, type_branchement) {
+  const prix_ttc = PRIX_INSTALLATIONS[puissance_kwc];
+  const [cout_reel, tva, prime] = calculCoutReel(prix_ttc, puissance_kwc, type_branchement);
+
+  const [economies_cumulees, economie_mensuelle_moyenne, annees] = calculTableauEconomies(
+    productible, puissance_kwc, cout_reel
+  );
+
+  // Mensualités
+  const mensualitesOptions = {};
+  for (let m in TAEG_TABLE) {
+    const nbM = parseInt(m);
+    mensualitesOptions[m] = {
+      prix_ttc: calculMensualites(prix_ttc, nbM),
+      cout_reel: calculMensualites(cout_reel, nbM)
+    };
+  }
+
+  // Hypothèses pour calcul nb panneaux et surface
+  const surfaceParKwc = 2.5;
+  const kwcParPanneau = 0.5;
+  const nombrePanneaux = Math.round(puissance_kwc / kwcParPanneau);
+  const surfaceTotale = Math.round(puissance_kwc * surfaceParKwc * 100) / 100;
+
+  // Production
+  const production = Math.round(productible * puissance_kwc * 100) / 100;
+
+  return {
+    puissance: puissance_kwc,
+    nombrePanneaux: nombrePanneaux,
+    surfaceTotale: surfaceTotale,
+    production: production,
+    prixTtc: prix_ttc,
+    prime: prime,
+    tva: Math.round(tva * 100) / 100,
+    aidesTotal: Math.round((prime + tva) * 100) / 100,
+    coutReel: cout_reel,
+    economieMensuelleMoyenne: economie_mensuelle_moyenne,
+    annees: annees,
+    mensualitesOptions: mensualitesOptions
+  };
+}
+
+function trouverMeilleureInstallation(productible, depenseMensuelleMax, typeBranchement) {
+  let meilleureInstallation = null;
+  let installationInferieure = null;
+
+  const puissances = Object.keys(PRIX_INSTALLATIONS).map(n => parseInt(n)).sort((a,b) => a - b);
+
+  for (let p of puissances) {
+    const inst = trouverInstallation(p, productible, typeBranchement);
+    if (inst.economieMensuelleMoyenne <= depenseMensuelleMax) {
+      installationInferieure = meilleureInstallation;
+      meilleureInstallation = inst;
+    }
+  }
+
+  // On renvoie [best, belowBest]
+  return [meilleureInstallation, installationInferieure];
+}
+
+/* ---------------------------------------------------------------
+   5) Gestion des événements (recherche villes + calcul final)
+--------------------------------------------------------------- */
+
+const btnSearchCities = document.getElementById('btnSearchCities');
+const btnCalculate = document.getElementById('btnCalculate');
+const postalInput = document.getElementById('postal_code');
+const citiesBlock = document.getElementById('citiesBlock');
+const citySelect = document.getElementById('citySelect');
+
+const errorBlock = document.getElementById('errorBlock');
+const resultsBlock = document.getElementById('resultsBlock');
+const resultsContent = document.getElementById('resultsContent');
+
+btnSearchCities.addEventListener('click', async () => {
+  clearMessages();
+  const postalCode = postalInput.value.trim();
+  if (!postalCode) {
+    showError("Veuillez saisir un code postal.");
+    return;
+  }
+  // Appel API Zippopotam.us
+  const cities = await getCitiesFromPostalCode(postalCode);
+  if (!cities || cities.length === 0) {
+    showError("Aucune ville trouvée pour ce code postal.");
+    return;
+  }
+  // On peuple la liste déroulante
+  citySelect.innerHTML = "";
+  cities.forEach(city => {
+    const opt = document.createElement('option');
+    opt.value = city;
+    opt.textContent = city;
+    citySelect.appendChild(opt);
+  });
+  // On affiche le bloc
+  citiesBlock.style.display = "block";
+});
+
+btnCalculate.addEventListener('click', async () => {
+  clearMessages();
+  const cityName = citySelect.value;
+  const aspect = document.getElementById('aspectSelect').value;
+  const depenseMax = parseFloat(document.getElementById('depenseMax').value);
+  const typeBranchement = document.getElementById('typeBranchement').value;
+
+  if (!cityName) {
+    showError("Veuillez sélectionner une ville.");
+    return;
+  }
+  if (isNaN(depenseMax) || depenseMax <= 0) {
+    showError("Veuillez saisir une dépense mensuelle max valide.");
+    return;
+  }
+
+  // Appel API GISCO pour coords
+  const [lat, lon] = await getCoordinatesFromGisco(cityName);
+  if (!lat || !lon) {
+    showError("Impossible de récupérer les coordonnées de la ville.");
+    return;
+  }
+
+  // Conversion aspect => aspectValue
+  let aspectValue = null;
+  switch(aspect) {
+    case "SUD": aspectValue = 0; break;
+    case "EST": aspectValue = -90; break;
+    case "OUEST": aspectValue = 90; break;
+    case "SUD-EST": aspectValue = -45; break;
+    case "SUD-OUEST": aspectValue = 45; break;
+    default: aspectValue = 0;
+  }
+
+  // Appel API PVGIS
+  const productible = await getProductible(lat, lon, aspectValue);
+  if (!productible) {
+    showError("Impossible de calculer le productible via PVGIS.");
+    return;
+  }
+
+  // Calcul automatique de la consommation 
+  // (round(depenseMensuelleMax / 0.24))
+  const consommationClient = Math.round(depenseMax / 0.24);
+
+  // Trouver installations
+  const [meilleure, inferieure] = trouverMeilleureInstallation(productible, depenseMax, typeBranchement);
+  // On veut seulement "inferieure"
+  let chosen = inferieure;
+  if (!chosen) {
+    chosen = meilleure; 
+  }
+
+  // Affichage des résultats
+  displayResults(cityName, lat, lon, aspect, productible, depenseMax, consommationClient, chosen);
+});
+
+/* ---------------------------------------------------------------
+   6) Fonctions d'affichage / gestion d'erreurs
+--------------------------------------------------------------- */
+function clearMessages() {
+  errorBlock.style.display = 'none';
+  errorBlock.innerHTML = '';
+  resultsBlock.style.display = 'none';
+  resultsContent.innerHTML = '';
+}
+
+function showError(msg) {
+  errorBlock.innerHTML = msg;
+  errorBlock.style.display = 'block';
+}
+
+function displayResults(ville, lat, lon, aspect, productible, depenseMax, conso, chosen) {
+  let html = `
+    <p><strong>Ville :</strong> ${ville}</p>
+    <p><strong>Coordonnées :</strong> lat=${lat.toFixed(4)}, lon=${lon.toFixed(4)}</p>
+    <p><strong>Orientation :</strong> ${aspect}</p>
+    <p><strong>Productible 1kWc :</strong> ${productible.toFixed(2)} kWh</p>
+    <p><strong>Dépense Mensuelle Max :</strong> ${depenseMax.toFixed(2)} €</p>
+    <p><strong>Consommation (calculée) :</strong> ${conso} kWh/an</p>
+  `;
+
+  if (!chosen) {
+    html += `<p>Aucune installation “inférieure” trouvée.</p>`;
+  } else {
+    html += `
+      <h3>Installation Conseillée (Inférieure à l'Optimale)</h3>
+      <table>
+        <tr><th>Puissance (kWc)</th><td>${chosen.puissance}</td></tr>
+        <tr><th>Nombre de Panneaux</th><td>${chosen.nombrePanneaux}</td></tr>
+        <tr><th>Surface (m²)</th><td>${chosen.surfaceTotale}</td></tr>
+        <tr><th>Production (kWh/an)</th><td>${chosen.production}</td></tr>
+        <tr><th>Prix TTC (€)</th><td>${chosen.prixTtc}</td></tr>
+        <tr><th>Prime (€)</th><td>${chosen.prime}</td></tr>
+        <tr><th>TVA (€)</th><td>${chosen.tva}</td></tr>
+        <tr><th>Total Aides (€)</th><td>${chosen.aidesTotal}</td></tr>
+        <tr><th>Coût Réel (€)</th><td>${chosen.coutReel}</td></tr>
+        <tr><th>Éco. Mensuelle Moyenne (€)</th><td>${chosen.economieMensuelleMoyenne}</td></tr>
+        <tr><th>Amort. (années)</th><td>${chosen.annees}</td></tr>
+      </table>
+
+      <h4>Options de Mensualités</h4>
+      <table>
+        <tr>
+          <th>Mensualités</th>
+          <th>Prix TTC (€)</th>
+          <th>Coût Réel (€)</th>
+        </tr>
+    `;
+    for (let m in chosen.mensualitesOptions) {
+      html += `
+        <tr>
+          <td>${m}</td>
+          <td>${chosen.mensualitesOptions[m].prix_ttc || '-'}</td>
+          <td>${chosen.mensualitesOptions[m].cout_reel || '-'}</td>
+        </tr>
+      `;
+    }
+    html += `</table>`;
+  }
+
+  resultsContent.innerHTML = html;
+  resultsBlock.style.display = 'block';
+}
+</script>
+</body>
+</html>
