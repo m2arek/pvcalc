@@ -222,7 +222,7 @@ function calculTableauEconomies(production_1kwc, puissance_kwc, cout_reel, taux_
 --------------------------------------------------------------- */
 async function getCitiesFromPostalCode(postalCode) {
   // Zippopotam.us
-  const url = `http://api.zippopotam.us/fr/${postalCode}`;
+  const url = `https://api.zippopotam.us/fr/${postalCode}`;
   try {
     const response = await fetch(url);
     if (!response.ok) return [];
